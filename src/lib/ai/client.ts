@@ -7,11 +7,22 @@ import { z } from "zod";
 // ---------------------------------------------------------------------------
 // Provider selection
 // ---------------------------------------------------------------------------
-// AI_PROVIDER=anthropic (default) uses Claude. AI_PROVIDER=gemini uses Google's
-// Gemini API, which has a free tier. Everything else in the app is provider-agnostic.
+// AI_PROVIDER=anthropic uses Claude. AI_PROVIDER=gemini uses Google's Gemini API,
+// which has a free tier. If AI_PROVIDER is not set, the provider whose key is
+// configured is used (Claude if both are). Everything else is provider-agnostic.
 
 export type Provider = "anthropic" | "gemini";
-export const PROVIDER: Provider = process.env.AI_PROVIDER === "gemini" ? "gemini" : "anthropic";
+
+function detectProvider(): Provider {
+  // Tolerate "Gemini", quotes or stray spaces pasted into a hosting dashboard.
+  const explicit = (process.env.AI_PROVIDER ?? "").trim().replace(/^["']|["']$/g, "").toLowerCase();
+  if (explicit === "gemini" || explicit === "google") return "gemini";
+  if (explicit === "anthropic" || explicit === "claude") return "anthropic";
+  if (!process.env.ANTHROPIC_API_KEY?.trim() && process.env.GEMINI_API_KEY?.trim()) return "gemini";
+  return "anthropic";
+}
+
+export const PROVIDER: Provider = detectProvider();
 
 const MODELS: Record<Provider, { main: string; fast: string }> = {
   anthropic: {
@@ -138,7 +149,10 @@ async function callAnthropic<T extends z.ZodType>({
   maxTokens = 32000,
 }: StructuredRequest<T>): Promise<RawResult> {
   if (!process.env.ANTHROPIC_API_KEY) {
-    throw new AIError("The AI service is not configured. Set ANTHROPIC_API_KEY on the server.", 500);
+    throw new AIError(
+      "The AI service is not configured. Set GEMINI_API_KEY (free tier) or ANTHROPIC_API_KEY on the server, then redeploy.",
+      500,
+    );
   }
   anthropic ??= new Anthropic({ maxRetries: 3 });
   const model = fast ? MODELS.anthropic.fast : MODELS.anthropic.main;
@@ -223,7 +237,7 @@ async function callGemini<T extends z.ZodType>({
   maxTokens = 32000,
 }: StructuredRequest<T>): Promise<RawResult> {
   if (!process.env.GEMINI_API_KEY) {
-    throw new AIError("The AI service is not configured. Set GEMINI_API_KEY on the server.", 500);
+    throw new AIError("The AI service is not configured. Set GEMINI_API_KEY on the server, then redeploy.", 500);
   }
   gemini ??= new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const primary = fast ? MODELS.gemini.fast : MODELS.gemini.main;
